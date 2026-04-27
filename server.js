@@ -1,42 +1,46 @@
-const express  = require('express');
-const cors     = require('cors');
-const XLSX     = require('xlsx');
-const multer   = require('multer');
-const path     = require('path');
-const fs       = require('fs');
+const express    = require('express');
+const cors       = require('cors');
+const multer     = require('multer');
+const path       = require('path');
+const { Pool }   = require('pg');
 const cloudinary = require('cloudinary').v2;
 
 const app  = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 8080;
 
-// Cloudinary config จาก environment variables
+/* ════════════════════════════════════════
+   PostgreSQL
+════════════════════════════════════════ */
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
+/* ════════════════════════════════════════
+   Cloudinary
+════════════════════════════════════════ */
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key:    process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const DATA_DIR  = path.join(__dirname, 'data');
-const XLSX_FILE = path.join(DATA_DIR, 'stock.xlsx');
-
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
 app.use(cors());
 app.use(express.json());
 
-// Multer — เก็บใน memory แล้วส่งต่อ Cloudinary (ไม่เก็บในเครื่อง)
+/* ════════════════════════════════════════
+   Multer (memory)
+════════════════════════════════════════ */
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    const allowed = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+    const allowed = ['.jpg','.jpeg','.png','.webp','.gif'];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error('รองรับเฉพาะไฟล์ภาพ (.jpg .png .webp .gif)'));
+    allowed.includes(ext) ? cb(null, true) : cb(new Error('รองรับเฉพาะไฟล์ภาพ'));
   },
   limits: { fileSize: 5 * 1024 * 1024 },
 });
 
-// อัปโหลดรูปขึ้น Cloudinary
 async function uploadToCloudinary(buffer, sku) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -47,66 +51,66 @@ async function uploadToCloudinary(buffer, sku) {
   });
 }
 
-// ลบรูปจาก Cloudinary
 async function deleteFromCloudinary(sku) {
   try { await cloudinary.uploader.destroy(`stock/${sku}`); } catch {}
 }
 
 /* ════════════════════════════════════════
-   Excel helpers
+   สร้างตารางถ้ายังไม่มี
 ════════════════════════════════════════ */
-function readExcel() {
-  if (!fs.existsSync(XLSX_FILE)) {
-    const wb = XLSX.utils.book_new();
-    const products = [
-      { sku:'P001', name:'กระดาษ A4',    unit:'รีม',   stock:50, minStock:10, imageUrl:'' },
-      { sku:'P002', name:'ปากกาลูกลื่น', unit:'ด้าม',  stock:4,  minStock:20, imageUrl:'' },
-      { sku:'P003', name:'แฟ้มเอกสาร',   unit:'อัน',   stock:0,  minStock:5,  imageUrl:'' },
-      { sku:'P004', name:'หมึกพิมพ์',    unit:'กล่อง', stock:15, minStock:3,  imageUrl:'' },
-      { sku:'P005', name:'กรรไกร',       unit:'อัน',   stock:8,  minStock:2,  imageUrl:'' },
-    ];
-    const transactions = [
-      { id:1, type:'in',  sku:'P001', name:'กระดาษ A4',    qty:20, balance:50, person:'สมชาย',  note:'รับจาก Supplier A', date: new Date(Date.now()-86400000*2).toISOString() },
-      { id:2, type:'out', sku:'P002', name:'ปากกาลูกลื่น', qty:16, balance:4,  person:'สมหญิง', note:'จ่ายแผนก HR',       date: new Date(Date.now()-86400000).toISOString()   },
-      { id:3, type:'in',  sku:'P004', name:'หมึกพิมพ์',    qty:5,  balance:15, person:'สมชาย',  note:'รับเพิ่ม',          date: new Date(Date.now()-3600000*3).toISOString()  },
-    ];
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(products),     'products');
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(transactions), 'transactions');
-    XLSX.writeFile(wb, XLSX_FILE);
-  }
-  const wb = XLSX.readFile(XLSX_FILE);
-  return {
-    products:     XLSX.utils.sheet_to_json(wb.Sheets['products']     || {}),
-    transactions: XLSX.utils.sheet_to_json(wb.Sheets['transactions'] || {}),
-  };
-}
-
-function writeExcel(products, transactions) {
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(products),     'products');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(transactions), 'transactions');
-  XLSX.writeFile(wb, XLSX_FILE);
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS products (
+      sku        VARCHAR(50)  PRIMARY KEY,
+      name       VARCHAR(255) NOT NULL,
+      unit       VARCHAR(50)  NOT NULL DEFAULT 'ชิ้น',
+      stock      INTEGER      NOT NULL DEFAULT 0,
+      min_stock  INTEGER      NOT NULL DEFAULT 5,
+      image_url  TEXT         NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS transactions (
+      id         SERIAL       PRIMARY KEY,
+      type       VARCHAR(3)   NOT NULL,
+      sku        VARCHAR(50)  NOT NULL REFERENCES products(sku) ON DELETE CASCADE,
+      qty        INTEGER      NOT NULL,
+      balance    INTEGER      NOT NULL,
+      person     VARCHAR(255),
+      note       TEXT,
+      created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    );
+  `);
+  console.log('✅ Database tables ready');
 }
 
 /* ════════════════════════════════════════
    Health check
 ════════════════════════════════════════ */
-app.get('/health', (req, res) => {
-  res.json({ status:'ok', cloudinary: !!process.env.CLOUDINARY_CLOUD_NAME, time: new Date() });
+app.get('/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', db: 'connected', time: new Date() });
+  } catch(e) { res.status(500).json({ status: 'error', message: e.message }); }
 });
 
 /* ════════════════════════════════════════
    SUMMARY
 ════════════════════════════════════════ */
-app.get('/api/summary', (req, res) => {
+app.get('/api/summary', async (req, res) => {
   try {
-    const { products, transactions } = readExcel();
+    const [p, ti, to, ls, os] = await Promise.all([
+      pool.query('SELECT COUNT(*) FROM products'),
+      pool.query("SELECT COALESCE(SUM(qty),0) AS t FROM transactions WHERE type='in'"),
+      pool.query("SELECT COALESCE(SUM(qty),0) AS t FROM transactions WHERE type='out'"),
+      pool.query('SELECT COUNT(*) FROM products WHERE stock > 0 AND stock <= min_stock'),
+      pool.query('SELECT COUNT(*) FROM products WHERE stock = 0'),
+    ]);
     res.json({
-      total_products: products.length,
-      total_in:       transactions.filter(t=>t.type==='in').reduce((a,t)=>a+Number(t.qty),0),
-      total_out:      transactions.filter(t=>t.type==='out').reduce((a,t)=>a+Number(t.qty),0),
-      low_stock:      products.filter(p=>Number(p.stock)>0&&Number(p.stock)<=Number(p.minStock)).length,
-      out_of_stock:   products.filter(p=>Number(p.stock)===0).length,
+      total_products: parseInt(p.rows[0].count),
+      total_in:       parseInt(ti.rows[0].t),
+      total_out:      parseInt(to.rows[0].t),
+      low_stock:      parseInt(ls.rows[0].count),
+      out_of_stock:   parseInt(os.rows[0].count),
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -114,78 +118,55 @@ app.get('/api/summary', (req, res) => {
 /* ════════════════════════════════════════
    PRODUCTS
 ════════════════════════════════════════ */
-app.get('/api/products', (req, res) => {
+app.get('/api/products', async (req, res) => {
   try {
-    const { products } = readExcel();
-    res.json(products);
+    const { rows } = await pool.query('SELECT sku, name, unit, stock, min_stock AS "minStock", image_url AS "imageUrl" FROM products ORDER BY name');
+    res.json(rows);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// POST /api/products — เพิ่มสินค้า + รูปภาพ
 app.post('/api/products', upload.single('image'), async (req, res) => {
   try {
     const { sku, name, unit='ชิ้น', stock=0, minStock=5 } = req.body;
     if (!sku || !name) return res.status(400).json({ error: 'sku และ name จำเป็นต้องมี' });
 
-    const { products, transactions } = readExcel();
-    if (products.find(p => p.sku === sku)) return res.status(409).json({ error: 'รหัสสินค้านี้มีอยู่แล้ว' });
-
     let imageUrl = '';
-    if (req.file) {
-      imageUrl = await uploadToCloudinary(req.file.buffer, sku.trim());
-    }
+    if (req.file) imageUrl = await uploadToCloudinary(req.file.buffer, sku.trim());
 
-    const newProduct = {
-      sku: sku.trim(), name: name.trim(), unit: unit.trim(),
-      stock: Number(stock), minStock: Number(minStock), imageUrl,
-    };
-    products.push(newProduct);
-    writeExcel(products, transactions);
-    res.status(201).json(newProduct);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+    const { rows } = await pool.query(
+      `INSERT INTO products (sku, name, unit, stock, min_stock, image_url)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [sku.trim(), name.trim(), unit.trim(), Number(stock), Number(minStock), imageUrl]
+    );
+    res.status(201).json({ ...rows[0], minStock: rows[0].min_stock, imageUrl: rows[0].image_url });
+  } catch(e) {
+    if (e.code === '23505') return res.status(409).json({ error: 'รหัสสินค้านี้มีอยู่แล้ว' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
-// PUT /api/products/:sku/image — เปลี่ยนรูปภาพ
 app.put('/api/products/:sku/image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'ไม่พบไฟล์รูปภาพ' });
-    const { sku } = req.params;
-    let { products, transactions } = readExcel();
-    const idx = products.findIndex(p => p.sku === sku);
-    if (idx === -1) return res.status(404).json({ error: 'ไม่พบสินค้า' });
-
-    const imageUrl = await uploadToCloudinary(req.file.buffer, sku);
-    products[idx] = { ...products[idx], imageUrl };
-    writeExcel(products, transactions);
+    const imageUrl = await uploadToCloudinary(req.file.buffer, req.params.sku);
+    await pool.query('UPDATE products SET image_url=$1 WHERE sku=$2', [imageUrl, req.params.sku]);
     res.json({ message: 'อัปเดตรูปภาพสำเร็จ', imageUrl });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// DELETE /api/products/:sku/image — ลบรูปภาพ
 app.delete('/api/products/:sku/image', async (req, res) => {
   try {
-    const { sku } = req.params;
-    let { products, transactions } = readExcel();
-    const idx = products.findIndex(p => p.sku === sku);
-    if (idx === -1) return res.status(404).json({ error: 'ไม่พบสินค้า' });
-
-    await deleteFromCloudinary(sku);
-    products[idx] = { ...products[idx], imageUrl: '' };
-    writeExcel(products, transactions);
+    await deleteFromCloudinary(req.params.sku);
+    await pool.query('UPDATE products SET image_url=$1 WHERE sku=$2', ['', req.params.sku]);
     res.json({ message: 'ลบรูปภาพสำเร็จ' });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// DELETE /api/products/:sku
 app.delete('/api/products/:sku', async (req, res) => {
   try {
-    let { products, transactions } = readExcel();
-    if (!products.find(p => p.sku === req.params.sku)) return res.status(404).json({ error: 'ไม่พบสินค้า' });
-
     await deleteFromCloudinary(req.params.sku);
-    products     = products.filter(p => p.sku !== req.params.sku);
-    transactions = transactions.filter(t => t.sku !== req.params.sku);
-    writeExcel(products, transactions);
+    const { rowCount } = await pool.query('DELETE FROM products WHERE sku=$1', [req.params.sku]);
+    if (!rowCount) return res.status(404).json({ error: 'ไม่พบสินค้า' });
     res.json({ message: 'ลบสำเร็จ' });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -193,76 +174,71 @@ app.delete('/api/products/:sku', async (req, res) => {
 /* ════════════════════════════════════════
    TRANSACTIONS
 ════════════════════════════════════════ */
-app.get('/api/transactions', (req, res) => {
+app.get('/api/transactions', async (req, res) => {
   try {
-    const { transactions, products } = readExcel();
     const { search='', type='' } = req.query;
-    const prodMap = Object.fromEntries(products.map(p => [p.sku, p]));
+    const conditions = ['1=1'];
+    const params = [];
+    if (type)   { params.push(type);   conditions.push(`t.type=$${params.length}`); }
+    if (search) { params.push(`%${search}%`); conditions.push(`(p.name ILIKE $${params.length} OR t.sku ILIKE $${params.length} OR t.note ILIKE $${params.length})`); }
 
-    let list = [...transactions].reverse();
-    if (type)   list = list.filter(t => t.type === type);
-    if (search) list = list.filter(t =>
-      String(t.name||'').toLowerCase().includes(search.toLowerCase()) ||
-      String(t.sku||'').toLowerCase().includes(search.toLowerCase())  ||
-      String(t.note||'').toLowerCase().includes(search.toLowerCase())
+    const { rows } = await pool.query(
+      `SELECT t.id, t.type, t.sku, p.name, t.qty, t.balance, t.person, t.note,
+              t.created_at AS date, p.unit, p.image_url AS "imageUrl"
+       FROM transactions t JOIN products p ON t.sku=p.sku
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY t.created_at DESC LIMIT 200`,
+      params
     );
-
-    list = list.map(t => ({
-      ...t,
-      unit:     prodMap[t.sku]?.unit || '',
-      imageUrl: prodMap[t.sku]?.imageUrl || '',
-    }));
-
-    res.json({ data: list, total: list.length });
+    res.json({ data: rows, total: rows.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/transactions', (req, res) => {
+app.post('/api/transactions', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { type, sku, qty, person='', note='' } = req.body;
     if (!type||!sku||!qty) return res.status(400).json({ error: 'type, sku, qty จำเป็นต้องมี' });
     if (!['in','out'].includes(type)) return res.status(400).json({ error: 'type ต้องเป็น in หรือ out' });
     if (Number(qty)<=0) return res.status(400).json({ error: 'qty ต้องมากกว่า 0' });
 
-    let { products, transactions } = readExcel();
-    const idx = products.findIndex(p => p.sku === sku);
-    if (idx===-1) return res.status(404).json({ error: 'ไม่พบสินค้า' });
+    await client.query('BEGIN');
+    const { rows: pr } = await client.query('SELECT * FROM products WHERE sku=$1 FOR UPDATE', [sku]);
+    if (!pr.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'ไม่พบสินค้า' }); }
 
-    const prod     = products[idx];
-    const numQty   = Number(qty);
-    const curStock = Number(prod.stock);
+    const prod = pr[0];
+    const numQty = Number(qty);
+    if (type==='out' && prod.stock < numQty) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `สต็อกไม่เพียงพอ (มี ${prod.stock} ${prod.unit})` });
+    }
 
-    if (type==='out'&&curStock<numQty)
-      return res.status(400).json({ error: `สต็อกไม่เพียงพอ (มี ${curStock} ${prod.unit})` });
-
-    const newStock  = type==='in' ? curStock+numQty : curStock-numQty;
-    products[idx]   = { ...prod, stock: newStock };
-
-    const maxId  = transactions.length ? Math.max(...transactions.map(t=>Number(t.id)||0)) : 0;
-    const newTxn = { id:maxId+1, type, sku:prod.sku, name:prod.name, qty:numQty, balance:newStock, person, note, date:new Date().toISOString() };
-    transactions.push(newTxn);
-    writeExcel(products, transactions);
+    const newStock = type==='in' ? prod.stock+numQty : prod.stock-numQty;
+    await client.query('UPDATE products SET stock=$1 WHERE sku=$2', [newStock, sku]);
+    const { rows: tr } = await client.query(
+      `INSERT INTO transactions (type,sku,qty,balance,person,note) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [type, sku, numQty, newStock, person, note]
+    );
+    await client.query('COMMIT');
 
     res.status(201).json({
-      transaction: { ...newTxn, unit:prod.unit, imageUrl:prod.imageUrl||'' },
+      transaction: { ...tr[0], name: prod.name, unit: prod.unit, imageUrl: prod.image_url, date: tr[0].created_at },
       new_stock: newStock,
     });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) { await client.query('ROLLBACK'); res.status(500).json({ error: e.message }); }
+  finally { client.release(); }
 });
 
-app.delete('/api/transactions/:id', (req, res) => {
+app.delete('/api/transactions/:id', async (req, res) => {
   try {
-    let { products, transactions } = readExcel();
-    if (!transactions.find(t=>Number(t.id)===Number(req.params.id)))
-      return res.status(404).json({ error: 'ไม่พบรายการ' });
-    transactions = transactions.filter(t=>Number(t.id)!==Number(req.params.id));
-    writeExcel(products, transactions);
+    const { rowCount } = await pool.query('DELETE FROM transactions WHERE id=$1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ error: 'ไม่พบรายการ' });
     res.json({ message: 'ลบสำเร็จ' });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 /* ════════════════════════════════════════
-   Serve React frontend
+   Serve React
 ════════════════════════════════════════ */
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('*', (req, res) => {
@@ -272,10 +248,16 @@ app.get('*', (req, res) => {
 /* ════════════════════════════════════════
    Start
 ════════════════════════════════════════ */
-app.listen(PORT, () => {
-  console.log('');
-  console.log('✅ Stock Backend พร้อมใช้งานแล้ว!');
-  console.log(`   PORT:      ${PORT}`);
-  console.log(`   Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME || 'ไม่ได้ตั้งค่า'}`);
-  console.log('');
+initDB().then(() => {
+  app.listen(PORT, () => {
+    console.log('');
+    console.log('✅ Stock Backend พร้อมใช้งานแล้ว!');
+    console.log(`   PORT:      ${PORT}`);
+    console.log(`   Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME || 'ไม่ได้ตั้งค่า'}`);
+    console.log(`   Database:  PostgreSQL`);
+    console.log('');
+  });
+}).catch(err => {
+  console.error('❌ Database init failed:', err.message);
+  process.exit(1);
 });
