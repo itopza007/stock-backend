@@ -1,14 +1,14 @@
-const express    = require('express');
-const cors       = require('cors');
-const multer     = require('multer');
-const path       = require('path');
-const bcrypt     = require('bcryptjs');
-const jwt        = require('jsonwebtoken');
-const { Pool }   = require('pg');
+const express = require('express');
+const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
 const cloudinary = require('cloudinary').v2;
 
-const app       = express();
-const PORT      = process.env.PORT || 8080;
+const app = express();
+const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || 'stockflow-secret-key-2024';
 
 /* ════════════════════════════════════════
@@ -24,7 +24,7 @@ const pool = new Pool({
 ════════════════════════════════════════ */
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
@@ -37,7 +37,7 @@ app.use(express.json());
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    const allowed = ['.jpg','.jpeg','.png','.webp','.gif'];
+    const allowed = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
     const ext = path.extname(file.originalname).toLowerCase();
     allowed.includes(ext) ? cb(null, true) : cb(new Error('รองรับเฉพาะไฟล์ภาพ'));
   },
@@ -55,7 +55,7 @@ async function uploadToCloudinary(buffer, sku) {
 }
 
 async function deleteFromCloudinary(sku) {
-  try { await cloudinary.uploader.destroy(`stock/${sku}`); } catch {}
+  try { await cloudinary.uploader.destroy(`stock/${sku}`); } catch { }
 }
 
 /* ════════════════════════════════════════
@@ -131,7 +131,7 @@ app.get('/health', async (req, res) => {
   try {
     await pool.query('SELECT 1');
     res.json({ status: 'ok', db: 'connected', time: new Date() });
-  } catch(e) { res.status(500).json({ status: 'error', message: e.message }); }
+  } catch (e) { res.status(500).json({ status: 'error', message: e.message }); }
 });
 
 /* ════════════════════════════════════════
@@ -145,11 +145,11 @@ app.post('/api/auth/login', async (req, res) => {
     if (!username || !password) return res.status(400).json({ error: 'กรุณากรอก username และ password' });
 
     const { rows } = await pool.query('SELECT * FROM users WHERE username=$1', [username]);
-    if (!rows.length) return res.status(401).json({ error: 'username หรือ password ไม่ถูกต้อง' });
+    if (!rows.length) return res.status(401).json({ error: 'ไม่พบผู้ใช้นี้ในระบบ' });
 
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ error: 'username หรือ password ไม่ถูกต้อง' });
+    if (!valid) return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
 
     const token = jwt.sign(
       { id: user.id, username: user.username, role: user.role, name: user.name },
@@ -158,7 +158,7 @@ app.post('/api/auth/login', async (req, res) => {
     );
 
     res.json({ token, user: { id: user.id, username: user.username, role: user.role, name: user.name } });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /api/auth/me — ตรวจสอบ token
@@ -175,15 +175,15 @@ app.get('/api/users', authMiddleware, adminOnly, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT id, username, role, name, created_at FROM users ORDER BY id');
     res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // POST /api/users — สร้าง user ใหม่
 app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
   try {
-    const { username, password, role='staff', name='' } = req.body;
+    const { username, password, role = 'staff', name = '' } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'กรุณากรอก username และ password' });
-    if (!['admin','staff'].includes(role)) return res.status(400).json({ error: 'role ต้องเป็น admin หรือ staff' });
+    if (!['admin', 'staff'].includes(role)) return res.status(400).json({ error: 'role ต้องเป็น admin หรือ staff' });
 
     const hash = await bcrypt.hash(password, 10);
     const { rows } = await pool.query(
@@ -191,7 +191,7 @@ app.post('/api/users', authMiddleware, adminOnly, async (req, res) => {
       [username.trim(), hash, role, name.trim()]
     );
     res.status(201).json(rows[0]);
-  } catch(e) {
+  } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'username นี้มีอยู่แล้ว' });
     res.status(500).json({ error: e.message });
   }
@@ -204,7 +204,7 @@ app.delete('/api/users/:id', authMiddleware, adminOnly, async (req, res) => {
     const { rowCount } = await pool.query('DELETE FROM users WHERE id=$1', [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: 'ไม่พบ user' });
     res.json({ message: 'ลบสำเร็จ' });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // PUT /api/users/:id/password — เปลี่ยน password
@@ -220,7 +220,7 @@ app.put('/api/users/:id/password', authMiddleware, async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     await pool.query('UPDATE users SET password=$1 WHERE id=$2', [hash, req.params.id]);
     res.json({ message: 'เปลี่ยน password สำเร็จ' });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /* ════════════════════════════════════════
@@ -237,12 +237,12 @@ app.get('/api/summary', authMiddleware, async (req, res) => {
     ]);
     res.json({
       total_products: parseInt(p.rows[0].count),
-      total_in:       parseInt(ti.rows[0].t),
-      total_out:      parseInt(to.rows[0].t),
-      low_stock:      parseInt(ls.rows[0].count),
-      out_of_stock:   parseInt(os.rows[0].count),
+      total_in: parseInt(ti.rows[0].t),
+      total_out: parseInt(to.rows[0].t),
+      low_stock: parseInt(ls.rows[0].count),
+      out_of_stock: parseInt(os.rows[0].count),
     });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /* ════════════════════════════════════════
@@ -254,12 +254,12 @@ app.get('/api/products', authMiddleware, async (req, res) => {
       'SELECT sku, name, unit, stock, min_stock AS "minStock", image_url AS "imageUrl" FROM products ORDER BY name'
     );
     res.json(rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/products', authMiddleware, adminOnly, upload.single('image'), async (req, res) => {
   try {
-    const { sku, name, unit='ชิ้น', stock=0, minStock=5 } = req.body;
+    const { sku, name, unit = 'ชิ้น', stock = 0, minStock = 5 } = req.body;
     if (!sku || !name) return res.status(400).json({ error: 'sku และ name จำเป็นต้องมี' });
 
     let imageUrl = '';
@@ -270,7 +270,7 @@ app.post('/api/products', authMiddleware, adminOnly, upload.single('image'), asy
       [sku.trim(), name.trim(), unit.trim(), Number(stock), Number(minStock), imageUrl]
     );
     res.status(201).json({ ...rows[0], minStock: rows[0].min_stock, imageUrl: rows[0].image_url });
-  } catch(e) {
+  } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'รหัสสินค้านี้มีอยู่แล้ว' });
     res.status(500).json({ error: e.message });
   }
@@ -282,7 +282,7 @@ app.put('/api/products/:sku/image', authMiddleware, adminOnly, upload.single('im
     const imageUrl = await uploadToCloudinary(req.file.buffer, req.params.sku);
     await pool.query('UPDATE products SET image_url=$1 WHERE sku=$2', [imageUrl, req.params.sku]);
     res.json({ message: 'อัปเดตรูปภาพสำเร็จ', imageUrl });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/products/:sku/image', authMiddleware, adminOnly, async (req, res) => {
@@ -290,7 +290,7 @@ app.delete('/api/products/:sku/image', authMiddleware, adminOnly, async (req, re
     await deleteFromCloudinary(req.params.sku);
     await pool.query('UPDATE products SET image_url=$1 WHERE sku=$2', ['', req.params.sku]);
     res.json({ message: 'ลบรูปภาพสำเร็จ' });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/products/:sku', authMiddleware, adminOnly, async (req, res) => {
@@ -299,7 +299,7 @@ app.delete('/api/products/:sku', authMiddleware, adminOnly, async (req, res) => 
     const { rowCount } = await pool.query('DELETE FROM products WHERE sku=$1', [req.params.sku]);
     if (!rowCount) return res.status(404).json({ error: 'ไม่พบสินค้า' });
     res.json({ message: 'ลบสำเร็จ' });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /* ════════════════════════════════════════
@@ -307,10 +307,10 @@ app.delete('/api/products/:sku', authMiddleware, adminOnly, async (req, res) => 
 ════════════════════════════════════════ */
 app.get('/api/transactions', authMiddleware, async (req, res) => {
   try {
-    const { search='', type='' } = req.query;
+    const { search = '', type = '' } = req.query;
     const conditions = ['1=1'];
     const params = [];
-    if (type)   { params.push(type); conditions.push(`t.type=$${params.length}`); }
+    if (type) { params.push(type); conditions.push(`t.type=$${params.length}`); }
     if (search) {
       params.push(`%${search}%`);
       conditions.push(`(p.name ILIKE $${params.length} OR t.sku ILIKE $${params.length} OR t.note ILIKE $${params.length})`);
@@ -324,16 +324,16 @@ app.get('/api/transactions', authMiddleware, async (req, res) => {
       params
     );
     res.json({ data: rows, total: rows.length });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/transactions', authMiddleware, async (req, res) => {
   const client = await pool.connect();
   try {
-    const { type, sku, qty, person='', note='' } = req.body;
-    if (!type||!sku||!qty) return res.status(400).json({ error: 'type, sku, qty จำเป็นต้องมี' });
-    if (!['in','out'].includes(type)) return res.status(400).json({ error: 'type ต้องเป็น in หรือ out' });
-    if (Number(qty)<=0) return res.status(400).json({ error: 'qty ต้องมากกว่า 0' });
+    const { type, sku, qty, person = '', note = '' } = req.body;
+    if (!type || !sku || !qty) return res.status(400).json({ error: 'type, sku, qty จำเป็นต้องมี' });
+    if (!['in', 'out'].includes(type)) return res.status(400).json({ error: 'type ต้องเป็น in หรือ out' });
+    if (Number(qty) <= 0) return res.status(400).json({ error: 'qty ต้องมากกว่า 0' });
 
     await client.query('BEGIN');
     const { rows: pr } = await client.query('SELECT * FROM products WHERE sku=$1 FOR UPDATE', [sku]);
@@ -341,16 +341,16 @@ app.post('/api/transactions', authMiddleware, async (req, res) => {
 
     const prod = pr[0];
     const numQty = Number(qty);
-    if (type==='out' && prod.stock < numQty) {
+    if (type === 'out' && prod.stock < numQty) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: `สต็อกไม่เพียงพอ (มี ${prod.stock} ${prod.unit})` });
     }
 
-    const newStock = type==='in' ? prod.stock+numQty : prod.stock-numQty;
+    const newStock = type === 'in' ? prod.stock + numQty : prod.stock - numQty;
     await client.query('UPDATE products SET stock=$1 WHERE sku=$2', [newStock, sku]);
     const { rows: tr } = await client.query(
       'INSERT INTO transactions (type,sku,qty,balance,person,note) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
-      [type, sku, numQty, newStock, person||req.user.name||req.user.username, note]
+      [type, sku, numQty, newStock, person || req.user.name || req.user.username, note]
     );
     await client.query('COMMIT');
 
@@ -358,7 +358,7 @@ app.post('/api/transactions', authMiddleware, async (req, res) => {
       transaction: { ...tr[0], name: prod.name, unit: prod.unit, imageUrl: prod.image_url, date: tr[0].created_at },
       new_stock: newStock,
     });
-  } catch(e) { await client.query('ROLLBACK'); res.status(500).json({ error: e.message }); }
+  } catch (e) { await client.query('ROLLBACK'); res.status(500).json({ error: e.message }); }
   finally { client.release(); }
 });
 
@@ -368,7 +368,7 @@ app.delete('/api/transactions/:id', authMiddleware, adminOnly, async (req, res) 
     const { rowCount } = await pool.query('DELETE FROM transactions WHERE id=$1', [req.params.id]);
     if (!rowCount) return res.status(404).json({ error: 'ไม่พบรายการ' });
     res.json({ message: 'ลบสำเร็จ' });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 /* ════════════════════════════════════════
