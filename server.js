@@ -269,7 +269,8 @@ app.get('/api/products', authMiddleware, async (req, res) => {
     const [dataRes, countRes] = await Promise.all([
       pool.query(
         `SELECT sku, name, unit, stock, min_stock AS "minStock", image_url AS "imageUrl",
-                COALESCE(cost_price,0) AS "costPrice", COALESCE(sale_price,0) AS "salePrice"
+                COALESCE(cost_price,0) AS "costPrice", COALESCE(sale_price,0) AS "salePrice",
+                COALESCE(shop_code,'') AS "shopCode"
          FROM products WHERE ${where} ORDER BY name
          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, Number(limit), offset]
@@ -401,6 +402,28 @@ app.delete('/api/transactions/:id', authMiddleware, adminOnly, async (req, res) 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+/* ════════════════════════════════════════
+   Update Product Info
+════════════════════════════════════════ */
+app.put('/api/products/:sku', authMiddleware, adminOnly, async (req, res) => {
+  const { sku } = req.params;
+  const { name, unit, minStock, costPrice, salePrice, shopCode } = req.body;
+  try {
+    await pool.query(`
+      ALTER TABLE products
+        ADD COLUMN IF NOT EXISTS shop_code VARCHAR(20) DEFAULT '';
+    `).catch(() => {});
+    const { rows } = await pool.query(`
+      UPDATE products SET
+        name=$1, unit=$2, min_stock=$3, cost_price=$4, sale_price=$5, shop_code=$6
+      WHERE sku=$7 RETURNING *
+    `, [name, unit, Number(minStock), Number(costPrice), Number(salePrice), shopCode || '', sku]);
+    if (!rows.length) return res.status(404).json({ error: 'ไม่พบสินค้า' });
+    res.json({ ok: true, product: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* ════════════════════════════════════════
    BULK IMPORT — นำเข้าสินค้าจาก JSON
 ════════════════════════════════════════ */
@@ -413,7 +436,8 @@ app.post('/api/import/products', authMiddleware, adminOnly, async (req, res) => 
     await pool.query(`
       ALTER TABLE products
         ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS sale_price NUMERIC(12,2) NOT NULL DEFAULT 0;
+        ADD COLUMN IF NOT EXISTS sale_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS shop_code VARCHAR(20) DEFAULT '';
     `);
   } catch (e) { /* มีแล้ว */ }
 
@@ -427,12 +451,13 @@ app.post('/api/import/products', authMiddleware, adminOnly, async (req, res) => 
       await client.query('BEGIN');
       for (const p of batch) {
         await client.query(`
-          INSERT INTO products (sku, name, unit, stock, min_stock, cost_price, sale_price, image_url)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,'')
+          INSERT INTO products (sku, name, unit, stock, min_stock, cost_price, sale_price, shop_code, image_url)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'')
           ON CONFLICT (sku) DO UPDATE SET
             name=EXCLUDED.name, unit=EXCLUDED.unit,
-            cost_price=EXCLUDED.cost_price, sale_price=EXCLUDED.sale_price
-        `, [p.sku, p.name, p.unit, p.stock ?? 0, p.min_stock ?? 5, p.cost_price ?? 0, p.sale_price ?? 0]);
+            cost_price=EXCLUDED.cost_price, sale_price=EXCLUDED.sale_price,
+            shop_code=EXCLUDED.shop_code
+        `, [p.sku, p.name, p.unit, p.stock ?? 0, p.min_stock ?? 5, p.cost_price ?? 0, p.sale_price ?? 0, p.shop_code ?? '']);
         inserted++;
       }
       await client.query('COMMIT');
