@@ -251,10 +251,39 @@ app.get('/api/summary', authMiddleware, async (req, res) => {
 ════════════════════════════════════════ */
 app.get('/api/products', authMiddleware, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT sku, name, unit, stock, min_stock AS "minStock", image_url AS "imageUrl", COALESCE(cost_price,0) AS "costPrice", COALESCE(sale_price,0) AS "salePrice" FROM products ORDER BY name'
-    );
-    res.json(rows);
+    const { search = '', status = '', page = 1, limit = 50 } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
+    const conditions = ['1=1'];
+    const params = [];
+
+    if (search) {
+      params.push(`%${search}%`);
+      conditions.push(`(name ILIKE $${params.length} OR sku ILIKE $${params.length})`);
+    }
+    if (status === 'low')  conditions.push('stock > 0 AND stock <= min_stock');
+    if (status === 'out')  conditions.push('stock = 0');
+    if (status === 'normal') conditions.push('stock > min_stock');
+
+    const where = conditions.join(' AND ');
+
+    const [dataRes, countRes] = await Promise.all([
+      pool.query(
+        `SELECT sku, name, unit, stock, min_stock AS "minStock", image_url AS "imageUrl",
+                COALESCE(cost_price,0) AS "costPrice", COALESCE(sale_price,0) AS "salePrice"
+         FROM products WHERE ${where} ORDER BY name
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, Number(limit), offset]
+      ),
+      pool.query(`SELECT COUNT(*) FROM products WHERE ${where}`, params),
+    ]);
+
+    res.json({
+      data: dataRes.rows,
+      total: parseInt(countRes.rows[0].count),
+      page: Number(page),
+      limit: Number(limit),
+      totalPages: Math.ceil(parseInt(countRes.rows[0].count) / Number(limit)),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
