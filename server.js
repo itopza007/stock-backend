@@ -372,6 +372,51 @@ app.delete('/api/transactions/:id', authMiddleware, adminOnly, async (req, res) 
 });
 
 /* ════════════════════════════════════════
+   BULK IMPORT — นำเข้าสินค้าจาก JSON
+════════════════════════════════════════ */
+app.post('/api/import/products', authMiddleware, adminOnly, async (req, res) => {
+  const { products } = req.body;
+  if (!Array.isArray(products) || !products.length)
+    return res.status(400).json({ error: 'ต้องส่ง products เป็น array' });
+
+  try {
+    await pool.query(`
+      ALTER TABLE products
+        ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS sale_price NUMERIC(12,2) NOT NULL DEFAULT 0;
+    `);
+  } catch (e) { /* มีแล้ว */ }
+
+  const BATCH = 500;
+  let inserted = 0, failed = 0;
+
+  for (let i = 0; i < products.length; i += BATCH) {
+    const batch = products.slice(i, i + BATCH);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const p of batch) {
+        await client.query(`
+          INSERT INTO products (sku, name, unit, stock, min_stock, cost_price, sale_price, image_url)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,'')
+          ON CONFLICT (sku) DO UPDATE SET
+            name=EXCLUDED.name, unit=EXCLUDED.unit,
+            cost_price=EXCLUDED.cost_price, sale_price=EXCLUDED.sale_price
+        `, [p.sku, p.name, p.unit, p.stock ?? 0, p.min_stock ?? 5, p.cost_price ?? 0, p.sale_price ?? 0]);
+        inserted++;
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      failed += batch.length;
+    } finally { client.release(); }
+  }
+
+  const { rows } = await pool.query('SELECT COUNT(*) FROM products');
+  res.json({ ok: true, inserted, failed, total_in_db: parseInt(rows[0].count) });
+});
+
+/* ════════════════════════════════════════
    Serve React
 ════════════════════════════════════════ */
 app.use(express.static(path.join(__dirname, 'public')));
