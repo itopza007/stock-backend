@@ -258,7 +258,7 @@ app.get('/api/products', authMiddleware, async (req, res) => {
 
     if (search) {
       params.push(`%${search}%`);
-      conditions.push(`(name ILIKE $${params.length} OR sku ILIKE $${params.length})`);
+      conditions.push(`(name ILIKE $${params.length} OR sku ILIKE $${params.length} OR COALESCE(shop_code,'') ILIKE $${params.length})`);
     }
     if (status === 'low')  conditions.push('stock > 0 AND stock <= min_stock');
     if (status === 'out')  conditions.push('stock = 0');
