@@ -252,7 +252,7 @@ app.get('/api/summary', authMiddleware, async (req, res) => {
 app.get('/api/products', authMiddleware, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT sku, name, unit, stock, min_stock AS "minStock", image_url AS "imageUrl" FROM products ORDER BY name'
+      'SELECT sku, name, unit, stock, min_stock AS "minStock", image_url AS "imageUrl", COALESCE(cost_price,0) AS "costPrice", COALESCE(sale_price,0) AS "salePrice" FROM products ORDER BY name'
     );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
