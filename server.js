@@ -125,6 +125,19 @@ function adminOnly(req, res, next) {
 }
 
 /* ════════════════════════════════════════
+   TEMP — Reset Admin Password (ลบออกหลังใช้!)
+════════════════════════════════════════ */
+app.get('/api/reset-admin', async (req, res) => {
+  try {
+    const hash = await bcrypt.hash('admin1234', 10);
+    await pool.query("UPDATE users SET password=$1 WHERE username='admin'", [hash]);
+    res.json({ ok: true, message: 'reset password admin เรียบร้อย — ลบ endpoint นี้ออกด้วยนะครับ!' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/* ════════════════════════════════════════
    Health check
 ════════════════════════════════════════ */
 app.get('/health', async (req, res) => {
