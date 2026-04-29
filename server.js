@@ -43,6 +43,8 @@ app.use(helmet({
 app.use(cors({
   origin: [
     'https://superjean.up.railway.app',
+    'https://superjeansshop.com',
+    'https://www.superjeansshop.com',
     'http://localhost:3000', // dev
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
