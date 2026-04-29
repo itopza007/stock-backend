@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const path = require('path');
 const bcrypt = require('bcryptjs');
@@ -28,7 +30,43 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-app.use(cors());
+/* ════════════════════════════════════════
+   Security Middleware
+════════════════════════════════════════ */
+// Helmet — HTTP security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // ปิดเพราะใช้ React
+  crossOriginEmbedderPolicy: false,
+}));
+
+// CORS — รับแค่จากโดเมนของเรา
+app.use(cors({
+  origin: [
+    'https://superjean.up.railway.app',
+    'http://localhost:3000', // dev
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+// Rate Limit — จำกัด 100 requests/นาที ต่อ IP
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: { error: 'Too many requests — กรุณารอสักครู่แล้วลองใหม่' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api', limiter);
+
+// Rate Limit เข้มงวดสำหรับ Login — 10 ครั้ง/นาที
+const loginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'พยายาม login มากเกินไป — กรุณารอ 1 นาที' },
+});
+app.use('/api/auth/login', loginLimiter);
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
