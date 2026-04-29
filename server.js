@@ -378,7 +378,8 @@ app.delete('/api/products/:sku', authMiddleware, adminOnly, async (req, res) => 
 ════════════════════════════════════════ */
 app.get('/api/transactions', authMiddleware, async (req, res) => {
   try {
-    const { search = '', type = '' } = req.query;
+    const { search = '', type = '', page = 1, limit = 30 } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
     const conditions = ['1=1'];
     const params = [];
     if (type) { params.push(type); conditions.push(`t.type=$${params.length}`); }
@@ -386,15 +387,44 @@ app.get('/api/transactions', authMiddleware, async (req, res) => {
       params.push(`%${search}%`);
       conditions.push(`(p.name ILIKE $${params.length} OR t.sku ILIKE $${params.length} OR t.note ILIKE $${params.length})`);
     }
-    const { rows } = await pool.query(
-      `SELECT t.id, t.type, t.sku, p.name, t.qty, t.balance, t.person, t.note,
-              t.created_at AS date, p.unit, p.image_url AS "imageUrl"
-       FROM transactions t JOIN products p ON t.sku=p.sku
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY t.created_at DESC LIMIT 200`,
-      params
-    );
-    res.json({ data: rows, total: rows.length });
+    const where = conditions.join(' AND ');
+    const [dataRes, countRes] = await Promise.all([
+      pool.query(
+        `SELECT t.id, t.type, t.sku, p.name, t.qty, t.balance, t.person, t.note,
+                t.created_at AS date, p.unit, p.image_url AS "imageUrl"
+         FROM transactions t JOIN products p ON t.sku=p.sku
+         WHERE ${where}
+         ORDER BY t.created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, Number(limit), offset]
+      ),
+      pool.query(
+        `SELECT COUNT(*) FROM transactions t JOIN products p ON t.sku=p.sku WHERE ${where}`,
+        params
+      ),
+    ]);
+    const total = parseInt(countRes.rows[0].count);
+    res.json({
+      data: dataRes.rows,
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      totalPages: Math.ceil(total / Number(limit)),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ลบ transaction ทั้งหมด — admin only + ต้องยืนยัน password
+app.delete('/api/transactions/all', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: 'กรุณากรอก password' });
+    const { rows } = await pool.query('SELECT password FROM users WHERE id=$1', [req.user.id]);
+    if (!rows.length) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+    const valid = await bcrypt.compare(password, rows[0].password);
+    if (!valid) return res.status(403).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
+    const { rowCount } = await pool.query('DELETE FROM transactions');
+    res.json({ message: `ลบรายการทั้งหมด ${rowCount} รายการสำเร็จ` });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
